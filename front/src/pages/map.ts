@@ -216,6 +216,10 @@ export function showMap(geojson: GeoJSON, url?: string): Promise<void> {
                 <input class="weight-select" type="number" min="0" max="10" step="0" value="1" />
                 <label class="weight-label" for="weight-select">Weight</label>
             </div>
+            <div class="heatmap-toggle">
+                <input type="checkbox" id="heatmap-toggle" ${heatmap ? 'checked' : ''} />
+                <label class="heatmap-label" for="heatmap-toggle">Heatmap</label>
+            </div>
         </div>
           `;
 
@@ -277,6 +281,80 @@ export function showMap(geojson: GeoJSON, url?: string): Promise<void> {
               '.weight-select',
             ) as HTMLInputElement;
             weightInput.value = String(state.getVal('weight'));
+
+            const heatmapToggle = elem.querySelector('#heatmap-toggle') as HTMLInputElement;
+            heatmapToggle.onchange = async () => {
+              const heatmapEnabled = heatmapToggle.checked;
+              state.set('heatmap', heatmapEnabled);
+              
+              if (!ngwMap) return;
+              
+              const map = ngwMap.mapAdapter.map;
+              if (!map) return;
+              
+              if (map.getLayer('heatmap-layer')) map.removeLayer('heatmap-layer');
+              if (map.getSource('heatmap-source')) map.removeSource('heatmap-source');
+              if (ngwMap.getLayer('layer')) await ngwMap.removeLayer('layer');
+              
+              if (heatmapEnabled && isPointData) {
+                map.addSource('heatmap-source', {
+                  type: 'geojson',
+                  data: geojson
+                });
+
+                map.addLayer({
+                  id: 'heatmap-layer',
+                  type: 'heatmap',
+                  source: 'heatmap-source',
+                  paint: {
+                    'heatmap-weight': 1,
+                    'heatmap-intensity': ['interpolate', ['linear'], ['zoom'], 0, 1, 9, 3],
+                    'heatmap-color': [
+                      'interpolate', ['linear'], ['heatmap-density'],
+                      0, 'rgba(33,102,172,0)',
+                      0.2, 'rgb(103,169,207)',
+                      0.4, 'rgb(209,229,240)',
+                      0.6, 'rgb(253,219,199)',
+                      0.8, 'rgb(239,138,98)',
+                      1, 'rgb(178,24,43)'
+                    ],
+                    'heatmap-radius': ['interpolate', ['linear'], ['zoom'], 0, 2, 9, 20],
+                    'heatmap-opacity': state.getVal('opacity')
+                  }
+                });
+              } else {
+                await ngwMap.addGeoJsonLayer({
+                  data: structuredClone(geojson),
+                  id: 'layer',
+                  paint: {
+                    color: state.getVal('color'),
+                    fillOpacity: state.getVal('opacity'),
+                    strokeColor: state.getVal('strokeColor'),
+                    strokeOpacity: state.getVal('strokeOpacity'),
+                    weight: state.getVal('weight')
+                  },
+                  selectedPaint: {
+                    color: 'orange',
+                    fillOpacity: 0.8,
+                    strokeOpacity: 1,
+                  },
+                  selectable: true,
+                  popupOnSelect: true,
+                  popupOptions: {
+                    createPopupContent: (e) => {
+                      const element = document.createElement('table');
+                      const properties = e.feature.properties || {};
+                      element.innerHTML = '<tbody>';
+                      Object.entries(properties).forEach(([key, value]) => {
+                        element.innerHTML += `<tr><th>${key}</th><td>${value}</td></tr>`;
+                      });
+                      element.innerHTML += '</tbody>';
+                      return element;
+                    },
+                  },
+                });
+              }
+            };
 
             fillColorSelect.oninput = () => {
               state.set('color', fillColorSelect.value);
