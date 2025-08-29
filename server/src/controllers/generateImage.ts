@@ -126,6 +126,7 @@ function getMapRequestOptions(req: Request) {
   const fitOffset = params.fitoffset;
   const fitPadding = params.fitpadding ? Number(params.fitpadding) : 5;
   const fitMaxZoom = params.fitmaxzoom ? Number(params.fitmaxzoom) : undefined;
+  const heatmap = params.heatmap === 'true' || params.heatmap === '1'; 
   const protocol = req.protocol;
 
   let hostname = req.hostname || req.headers.host;
@@ -156,6 +157,9 @@ function getMapRequestOptions(req: Request) {
   }
   if (fitMaxZoom !== undefined) {
     urlObj.searchParams.set('fitmaxzoom', fitMaxZoom.toString());
+  }
+  if (heatmap) {
+    urlObj.searchParams.set('heatmap', 'true');
   }
 
   const url = urlObj.toString();
