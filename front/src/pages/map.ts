@@ -1,7 +1,6 @@
 import { mdiRefresh, mdiShare } from '@mdi/js';
 import Dialog from '@nextgis/dialog';
 import NgwMap from '@nextgis/ngw-maplibre-gl';
-import Color from 'color';
 
 import { showInput, urlRuntime } from '../common';
 import { SidebarControl } from '../map-controls/scalebar-control';
@@ -12,11 +11,19 @@ import { makeIcon } from '../utils/makeIcon';
 
 import { createShareContent } from './share';
 
+import { heatmapIcon } from './heatmapIcon';
+
 import type { PathPaint } from '@nextgis/paint';
 import type { FitOptions } from '@nextgis/webmap';
-import type { GeoJSON } from 'geojson';
+import type { GeoJSON, Geometry } from 'geojson';
 
-import './map.css'
+import './map.css';
+
+import { addHeatmapLayer, addGeoJsonLayer } from '../utils/layerUtils';
+import {
+  addPaintControl,
+  updatePaintControlOnHeatmapToggle,
+} from './paintControl';
 
 export const mapBlock = document.getElementById('map') as HTMLElement;
 
@@ -30,7 +37,6 @@ export function showMap(geojson: GeoJSON, url?: string): Promise<void> {
     const padding = state.getVal('fitPadding');
     const maxZoom = state.getVal('fitMaxZoom');
     const qmsId = state.getVal('qmsId');
-    const opacityInit = state.getVal('opacity');
 
     const bbox = state.getVal('bbox');
 
@@ -88,97 +94,67 @@ export function showMap(geojson: GeoJSON, url?: string): Promise<void> {
         },
       });
 
+      const isPointGeom = ({ type }: Geometry): boolean =>
+        type === 'Point' || type === 'MultiPoint';
       function hasPointData(geojson: GeoJSON): boolean {
         if (geojson.type === 'FeatureCollection') {
-          return geojson.features.some(feature => {
-            const geomType = feature.geometry.type;
-            return geomType === 'Point' || geomType === 'MultiPoint';
+          return geojson.features.some((feature) => {
+            return isPointGeom(feature.geometry);
           });
         } else if (geojson.type === 'Feature') {
-          const geomType = geojson.geometry.type;
-          return geomType === 'Point' || geomType === 'MultiPoint';
-        } else if (geojson.type === 'Point' || geojson.type === 'MultiPoint') {
-          return true;
+          return isPointGeom(geojson.geometry);
         }
-        return false;
+        return isPointGeom(geojson);
       }
 
       const isPointData = hasPointData(geojson);
 
-      if (heatmap && isPointData) {
-        await waitForIdle();
-        map.addSource('heatmap-source', {
-          type: 'geojson',
-          data: geojson
-        });
-
-        map.addLayer({
-          id: 'heatmap-layer',
-          type: 'heatmap',
-          source: 'heatmap-source',
-          paint: {
-            'heatmap-weight': 1,
-            'heatmap-intensity': [
-              'interpolate',
-              ['linear'],
-              ['zoom'],
-              0, 1,
-              9, 3
-            ],
-            'heatmap-color': [
-              'interpolate',
-              ['linear'],
-              ['heatmap-density'],
-              0, 'rgba(33,102,172,0)',
-              0.2, 'rgb(103,169,207)',
-              0.4, 'rgb(209,229,240)',
-              0.6, 'rgb(253,219,199)',
-              0.8, 'rgb(239,138,98)',
-              1, 'rgb(178,24,43)'
-            ],
-            'heatmap-radius': [
-              'interpolate',
-              ['linear'],
-              ['zoom'],
-              0, 2,
-              9, 20
-            ],
-            'heatmap-opacity': opacityInit
-          }
-        });
-      } else {
-
-      const layer = await ngwMap.addGeoJsonLayer({
-        data: JSON.parse(JSON.stringify(geojson)),
-        id: 'layer',
-        paint: {
-          color: state.getVal('color'),
-          fillOpacity: state.getVal('opacity'),
-          strokeColor: state.getVal('strokeColor'),
-          strokeOpacity: state.getVal('strokeOpacity'),
-        },
-        selectedPaint: {
-          color: 'orange',
-          fillOpacity: 0.8,
-          strokeOpacity: 1,
-        },
-        selectable: true,
-        popupOnSelect: true,
-        popupOptions: {
-          createPopupContent: (e) => {
-            const element = document.createElement('table');
-            const properties = e.feature.properties || {};
-            element.innerHTML = '<tbody>';
-            Object.entries(properties).forEach(([key, value]) => {
-              element.innerHTML += `<tr><th>${key}</th><td>${value}</td></tr>`;
-            });
-            element.innerHTML += '</tbody>';
-            return element;
+      if (isPointData) {
+        ngwMap.addControl('BUTTON', 'top-left', {
+          html: heatmapIcon,
+          title: 'Toggle Heatmap',
+          onClick: async () => {
+            const currentHeatmap = state.getVal('heatmap');
+            const newHeatmap = !currentHeatmap;
+            state.set('heatmap', newHeatmap);
+            toggleHeatmap(geojson, newHeatmap);
+            updatePaintControlOnHeatmapToggle(ngwMap_, newHeatmap);
           },
-        },
-      });
+        });
+      }
 
-      if (!bbox) {
+      function clearLayer() {
+        const map = ngwMap_.mapAdapter.map;
+
+        if (!map) return;
+
+        if (map.getLayer('heatmap-layer')) map.removeLayer('heatmap-layer');
+        if (map.getSource('heatmap-source')) map.removeSource('heatmap-source');
+        if (ngwMap_.getLayer('layer')) ngwMap_.removeLayer('layer');
+      }
+
+      function toggleHeatmap(geojson: GeoJSON, enabled: boolean) {
+        clearLayer();
+
+        if (enabled) {
+          const opacity = state.getVal('opacity');
+          return addHeatmapLayer({ geojson, ngwMap: ngwMap_, opacity });
+        } else {
+          return addGeoJsonLayer({
+            geojson,
+            ngwMap: ngwMap_,
+            color: state.getVal('color'),
+            fillOpacity: state.getVal('opacity'),
+            strokeColor: state.getVal('strokeColor'),
+            strokeOpacity: state.getVal('strokeOpacity'),
+          });
+        }
+      }
+      await waitForIdle();
+
+      const layer = toggleHeatmap(geojson, !!(heatmap && isPointData));
+
+      if (!bbox && layer) {
         const fitOptions: FitOptions = {};
         const offset = state.getVal('fitOffset');
         if (offset) {
@@ -193,193 +169,9 @@ export function showMap(geojson: GeoJSON, url?: string): Promise<void> {
 
         ngwMap?.fitLayer(layer, fitOptions);
       }
-    }
       await waitForIdle();
 
-      const paintControl = ngwMap.createControl(
-        {
-          onAdd: () => {
-            const elem = document.createElement('div');
-            elem.innerHTML = `
-          <div id="style-control">
-            <div class="color-control">
-                <input class="fill-color-select" type="color" />
-                <input class="alpha-select" type="range" min="0" max="1" step="0.01" value="1" />
-                <label class="fill-color-label" for="fill-color-select">Fill color</label>
-            </div>
-            <div class="color-control">
-                <input class="stroke-color-select" type="color" />
-                <input class="stroke-alpha-select" type="range" min="0" max="1" step="0.01" value="1" />
-                <label class="stroke-color-label" for="stroke-color-select">Stroke color</label>
-            </div>
-            <div class="weight">
-                <input class="weight-select" type="number" min="0" max="10" step="0" value="1" />
-                <label class="weight-label" for="weight-select">Weight</label>
-            </div>
-            <div class="heatmap-toggle">
-                <input type="checkbox" id="heatmap-toggle" ${heatmap ? 'checked' : ''} />
-                <label class="heatmap-label" for="heatmap-toggle">Heatmap</label>
-            </div>
-        </div>
-          `;
-
-            const containers = elem.querySelectorAll(
-              '.color-control',
-            ) as NodeListOf<HTMLDivElement>;
-            containers.forEach((container) => {
-              container.style.display = 'flex';
-              container.style.alignItems = 'center';
-              container.style.width = '207px';
-              container.style.height = '35px';
-              container.style.cursor = 'pointer';
-              container.style.borderRadius = '4px';
-            });
-
-            const colorInputs = elem.querySelectorAll(
-              '.fill-color-select, .stroke-color-select',
-            ) as NodeListOf<HTMLInputElement>;
-            colorInputs.forEach((colorInput) => {
-              colorInput.style.width = '18%';
-              colorInput.style.border = 'none';
-              colorInput.style.background = '#fff';
-              colorInput.style.margin = '0 7px';
-              colorInput.style.cursor = 'pointer';
-              colorInput.style.padding = '0';
-            });
-
-            const alphaInputs = elem.querySelectorAll(
-              '.alpha-select, .stroke-alpha-select',
-            ) as NodeListOf<HTMLInputElement>;
-            alphaInputs.forEach((alphaInput) => {
-              alphaInput.value = String(opacityInit);
-              alphaInput.style.width = '40px';
-              alphaInput.style.cursor = 'pointer';
-              alphaInput.style.height = '2px';
-            });
-
-            const fillColorSelect = elem.querySelector(
-              '.fill-color-select',
-            ) as HTMLInputElement;
-            fillColorSelect.value = Color(state.getVal('color')).hex();
-
-            const alphaInput = elem.querySelector(
-              '.alpha-select',
-            ) as HTMLInputElement;
-            alphaInput.value = String(state.getVal('opacity'));
-
-            const strokeColorSelect = elem.querySelector(
-              '.stroke-color-select',
-            ) as HTMLInputElement;
-            strokeColorSelect.value = Color(state.getVal('strokeColor')).hex();
-
-            const strokeAlphaInput = elem.querySelector(
-              '.stroke-alpha-select',
-            ) as HTMLInputElement;
-            strokeAlphaInput.value = String(state.getVal('strokeOpacity'));
-            
-            const weightInput = elem.querySelector(
-              '.weight-select',
-            ) as HTMLInputElement;
-            weightInput.value = String(state.getVal('weight'));
-
-            const heatmapToggle = elem.querySelector('#heatmap-toggle') as HTMLInputElement;
-            heatmapToggle.onchange = async () => {
-              const heatmapEnabled = heatmapToggle.checked;
-              state.set('heatmap', heatmapEnabled);
-              
-              if (!ngwMap) return;
-              
-              const map = ngwMap.mapAdapter.map;
-              if (!map) return;
-              
-              if (map.getLayer('heatmap-layer')) map.removeLayer('heatmap-layer');
-              if (map.getSource('heatmap-source')) map.removeSource('heatmap-source');
-              if (ngwMap.getLayer('layer')) await ngwMap.removeLayer('layer');
-              
-              if (heatmapEnabled && isPointData) {
-                map.addSource('heatmap-source', {
-                  type: 'geojson',
-                  data: geojson
-                });
-
-                map.addLayer({
-                  id: 'heatmap-layer',
-                  type: 'heatmap',
-                  source: 'heatmap-source',
-                  paint: {
-                    'heatmap-weight': 1,
-                    'heatmap-intensity': ['interpolate', ['linear'], ['zoom'], 0, 1, 9, 3],
-                    'heatmap-color': [
-                      'interpolate', ['linear'], ['heatmap-density'],
-                      0, 'rgba(33,102,172,0)',
-                      0.2, 'rgb(103,169,207)',
-                      0.4, 'rgb(209,229,240)',
-                      0.6, 'rgb(253,219,199)',
-                      0.8, 'rgb(239,138,98)',
-                      1, 'rgb(178,24,43)'
-                    ],
-                    'heatmap-radius': ['interpolate', ['linear'], ['zoom'], 0, 2, 9, 20],
-                    'heatmap-opacity': state.getVal('opacity')
-                  }
-                });
-              } else {
-                await ngwMap.addGeoJsonLayer({
-                  data: structuredClone(geojson),
-                  id: 'layer',
-                  paint: {
-                    color: state.getVal('color'),
-                    fillOpacity: state.getVal('opacity'),
-                    strokeColor: state.getVal('strokeColor'),
-                    strokeOpacity: state.getVal('strokeOpacity'),
-                    weight: state.getVal('weight')
-                  },
-                  selectedPaint: {
-                    color: 'orange',
-                    fillOpacity: 0.8,
-                    strokeOpacity: 1,
-                  },
-                  selectable: true,
-                  popupOnSelect: true,
-                  popupOptions: {
-                    createPopupContent: (e) => {
-                      const element = document.createElement('table');
-                      const properties = e.feature.properties || {};
-                      element.innerHTML = '<tbody>';
-                      Object.entries(properties).forEach(([key, value]) => {
-                        element.innerHTML += `<tr><th>${key}</th><td>${value}</td></tr>`;
-                      });
-                      element.innerHTML += '</tbody>';
-                      return element;
-                    },
-                  },
-                });
-              }
-            };
-
-            fillColorSelect.oninput = () => {
-              state.set('color', fillColorSelect.value);
-            };
-            weightInput.oninput = () => {
-              state.set('weight', Number(weightInput.value));
-            };
-            alphaInput.oninput = () => {
-              state.set('opacity', Number(alphaInput.value));
-            };
-            strokeColorSelect.oninput = () => {
-              state.set('strokeColor', strokeColorSelect.value);
-            };
-            strokeAlphaInput.oninput = () => {
-              state.set('strokeOpacity', Number(strokeAlphaInput.value));
-            };
-
-            return elem;
-          },
-          onRemove: () => null,
-        },
-        { bar: true, addClass: 'paint-control' },
-      );
-
-      ngwMap.addControl(paintControl, 'top-right');
+      addPaintControl(ngwMap, !!(heatmap && isPointData));
 
       new SidebarControl({ ngwMap });
 
@@ -398,9 +190,15 @@ export function showMap(geojson: GeoJSON, url?: string): Promise<void> {
         }
       }
 
-      if (heatmap && paint.fillOpacity !== undefined) {
-        ngwMap?.mapAdapter.map?.setPaintProperty('heatmap-layer', 'heatmap-opacity', paint.fillOpacity);
-      } else {    
+      const currentHeatmap = state.heatmap?.value;
+
+      if (currentHeatmap && paint.fillOpacity !== undefined) {
+        ngwMap?.mapAdapter.map?.setPaintProperty(
+          'heatmap-layer',
+          'heatmap-opacity',
+          paint.fillOpacity,
+        );
+      } else {
         ngwMap?.updateLayerPaint('layer', paint);
       }
     });

@@ -32,16 +32,3 @@ label {
 .weight-label {
     margin-left: 25px;
 }
-
-.heatmap-toggle {
-  display: flex;
-}
-
-#heatmap-toggle {
-    margin: 0 15px;
-}
-
-.heatmap-label {
-    margin-left: 60px;
-    pointer-events: none;
-}
