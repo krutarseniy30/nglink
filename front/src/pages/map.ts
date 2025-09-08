@@ -19,7 +19,11 @@ import type { GeoJSON, Geometry } from 'geojson';
 
 import './map.css';
 
-import { addHeatmapLayer, addGeoJsonLayer } from '../utils/layerUtils';
+import {
+  addHeatmapLayer,
+  addGeoJsonLayer,
+  fitMaplibreLayer,
+} from '../utils/layerUtils';
 import {
   addPaintControl,
   updatePaintControlOnHeatmapToggle,
@@ -133,7 +137,7 @@ export function showMap(geojson: GeoJSON, url?: string): Promise<void> {
         if (ngwMap_.getLayer('layer')) ngwMap_.removeLayer('layer');
       }
 
-      function toggleHeatmap(geojson: GeoJSON, enabled: boolean) {
+      async function toggleHeatmap(geojson: GeoJSON, enabled: boolean) {
         clearLayer();
 
         if (enabled) {
@@ -150,9 +154,10 @@ export function showMap(geojson: GeoJSON, url?: string): Promise<void> {
           });
         }
       }
+
       await waitForIdle();
 
-      const layer = toggleHeatmap(geojson, !!(heatmap && isPointData));
+      const layer = await toggleHeatmap(geojson, !!(heatmap && isPointData));
 
       if (!bbox && layer) {
         const fitOptions: FitOptions = {};
@@ -166,8 +171,11 @@ export function showMap(geojson: GeoJSON, url?: string): Promise<void> {
         if (maxZoom !== undefined) {
           fitOptions.maxZoom = maxZoom;
         }
-
-        ngwMap?.fitLayer(layer, fitOptions);
+        if (typeof layer === 'string') {
+          fitMaplibreLayer({ ngwMap, sourceId: layer, fitOptions });
+        } else {
+          ngwMap?.fitLayer(layer, fitOptions);
+        }
       }
       await waitForIdle();
 

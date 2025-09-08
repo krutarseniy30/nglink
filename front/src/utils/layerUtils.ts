@@ -1,5 +1,12 @@
 import { NgwMap } from '@nextgis/ngw-map';
-import { Map } from 'maplibre-gl';
+import { eachCoordinates } from '@nextgis/utils';
+import {
+  FitBoundsOptions,
+  LngLatBounds,
+  GeoJSONSource,
+  Map,
+  MapLibreEvent,
+} from 'maplibre-gl';
 import type { GeoJSON } from 'geojson';
 
 interface LayerOptions {
@@ -12,14 +19,58 @@ interface LayerOptions {
   strokeOpacity?: number;
 }
 
+export function fitMaplibreLayer({
+  ngwMap,
+  sourceId,
+  fitOptions,
+}: {
+  ngwMap: NgwMap<Map>;
+  sourceId: string;
+  fitOptions?: FitBoundsOptions;
+}) {
+  const map = ngwMap.mapAdapter.map;
+  if (!map) {
+    throw new Error('Map is undenfined');
+  }
+
+  const fit = async (
+    e: MapLibreEvent & {
+      isSourceLoaded: boolean;
+      sourceId: string;
+    },
+  ) => {
+    if (e.isSourceLoaded && e.sourceId === sourceId) {
+      const source = map.getSource<GeoJSONSource>(sourceId);
+      if (!source) {
+        map.off('sourcedata', fit);
+        return;
+      }
+      const features = await source.getData();
+
+      if (features) {
+        const bounds = new LngLatBounds();
+
+        eachCoordinates(features, (coord) => {
+          bounds.extend([coord[0], coord[1]]);
+        });
+
+        map.fitBounds(bounds, { ...fitOptions, duration: 0 });
+        map.off('sourcedata', fit);
+      }
+    }
+  };
+
+  map.on('sourcedata', fit);
+}
+
 export function addHeatmapLayer({ geojson, ngwMap, opacity }: LayerOptions) {
   const map = ngwMap.mapAdapter.map;
 
   if (!map) {
     throw new Error('Map is undenfined');
   }
-
-  map.addSource('heatmap-source', {
+  const source = 'heatmap-source';
+  map.addSource(source, {
     type: 'geojson',
     data: geojson,
   });
@@ -27,7 +78,7 @@ export function addHeatmapLayer({ geojson, ngwMap, opacity }: LayerOptions) {
   map.addLayer({
     id: 'heatmap-layer',
     type: 'heatmap',
-    source: 'heatmap-source',
+    source: source,
     paint: {
       'heatmap-weight': 1,
       'heatmap-intensity': ['interpolate', ['linear'], ['zoom'], 0, 1, 9, 3],
@@ -52,6 +103,7 @@ export function addHeatmapLayer({ geojson, ngwMap, opacity }: LayerOptions) {
       'heatmap-opacity': opacity,
     },
   });
+  return source;
 }
 
 export async function addGeoJsonLayer({
